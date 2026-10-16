@@ -1,5 +1,6 @@
 {
   "name": "contexto-lateral",
+  "displayName": "Side Context",
   "version": "0.1.0",
   "author": { "name": "mixzplit" },
   "repository": "https://github.com/mixzplit/contexto-lateral",
