@@ -6,6 +6,8 @@
 
 Un panel lateral para Claude Code que muestra, en vivo, la ventana de contexto, los modelos usados, los tokens consumidos, los agentes y shells en segundo plano, el proyecto y las cuotas de uso.
 
+![Panel de contexto-lateral con el contexto, los modelos, los tokens, el proyecto y las cuotas de uso](docs/panel.png)
+
 ## Instalación rápida
 
 1. Agrega el marketplace e instala el mod. Dentro de una sesión de Claude Code:
