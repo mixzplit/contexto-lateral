@@ -4,9 +4,26 @@
 [![Versión](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmixzplit%2Fcontexto-lateral%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=versi%C3%B3n)](https://github.com/mixzplit/contexto-lateral/tags)
 [![Último commit](https://img.shields.io/github/last-commit/mixzplit/contexto-lateral)](https://github.com/mixzplit/contexto-lateral/commits/main)
 
-Un panel lateral para Claude Code que muestra, en vivo, la ventana de contexto, los modelos usados, los tokens consumidos, los agentes y shells en segundo plano, el proyecto y las cuotas de uso.
+<table>
+<tr>
+<td valign="top" width="320">
+<img src="docs/panel.png" width="311" alt="Panel de contexto-lateral con el contexto, los modelos, los tokens, el proyecto y las cuotas de uso">
+</td>
+<td valign="top">
 
-![Panel de contexto-lateral con el contexto, los modelos, los tokens, el proyecto y las cuotas de uso](docs/panel.png)
+**Un panel lateral para Claude Code** que muestra, en vivo y sin interrumpir la conversación, el estado de tu sesión: el contexto, los modelos, los tokens, los agentes y shells en segundo plano, el proyecto y las cuotas de uso.
+
+**Por qué es útil**
+
+- **Ves cuánto contexto te queda** en lugar de adivinarlo, con una barra y el porcentaje usado.
+- **Sabes qué consume cada modelo:** tokens de entrada, salida y caché, por separado.
+- **Nada corre a escondidas:** los agentes y shells en segundo plano aparecen mientras corren.
+- **Controlas tus cuotas:** el uso de la ventana de 5 horas y el semanal, a la vista.
+- **Se actualiza solo** y vive al costado: no ocupa lugar en la conversación.
+
+</td>
+</tr>
+</table>
 
 ## Instalación rápida
 
