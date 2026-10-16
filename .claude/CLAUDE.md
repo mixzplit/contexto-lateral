@@ -41,6 +41,6 @@ claude plugin test .       # corre todos los *.test.ts de la carpeta (unos 4 s)
 ## Versiones y publicación
 
 - La versión vive en `.claude-plugin/plugin.json`. Quien ya instaló solo recibe cambios si ese campo cambia: subirlo en cada release y no declararlo también en `marketplace.json` (gana `plugin.json` sin avisar).
-- `claude plugin tag` crea el tag `contexto-lateral--vX.Y.Z` y valida que los manifiestos coincidan; exige árbol de trabajo limpio. Instalar no depende de los tags.
-- Ramas, commits y Pull Requests siguen `docs/git-workflow.md`: nada llega a `main` sin PR, commits convencionales, sin atribución a herramientas de IA en commits ni tags, y el agente no hace push ni abre PRs salvo que la persona se lo pida explícitamente.
+- `claude plugin tag` crea el tag `contexto-lateral--vX.Y.Z` y valida que los manifiestos coincidan; exige árbol de trabajo limpio. Instalar no depende de los tags. Cada tag lleva su Release en GitHub (`gh release create`, ver `docs/git-workflow.md`).
+- Ramas, commits y Pull Requests siguen `docs/git-workflow.md`: nada llega a `main` sin PR, commits convencionales, sin atribución a herramientas de IA en commits ni tags, y el agente no hace push, no abre PRs ni crea Releases salvo que la persona se lo pida explícitamente.
 - Un mod ejecuta código en la máquina de quien lo instala (`$.fs`, `$.process`, `$.http`). De un PR externo se lee el diff completo antes de ejecutar nada, tests incluidos; sobre todo `plugin.json`, `marketplace.json`, `hooks/hooks.json`, archivos nuevos y dependencias.

@@ -100,7 +100,7 @@ Un mod ejecuta código en la máquina de quien lo instala. Por eso el mantenedor
 
 Solo el mantenedor publica versiones.
 
-Los tags no son obligatorios para que el mod se instale: sirven para marcar cada versión y para que otros plugins puedan declarar un rango de versiones de este. Lo que hace que los usuarios ya instalados reciban una actualización es el campo `version` de `.claude-plugin/plugin.json`: si no cambia, siguen con la copia en caché.
+Los tags no son obligatorios para que el mod se instale: sirven para marcar cada versión y para que otros plugins puedan declarar un rango de versiones de este. Lo que hace que los usuarios ya instalados reciban una actualización es el campo `version` de `.claude-plugin/plugin.json`: si no cambia, siguen con la copia en caché. Además, cada versión lleva su Release en GitHub: un tag solo no aparece en la sección «Releases» del repositorio.
 
 1. Abrir un PR `chore: version X.Y.Z` que actualice `version` en `.claude-plugin/plugin.json`, y mergearlo a `main`.
 2. Sincronizar `main` local y comprobar que el árbol de trabajo está limpio.
@@ -117,6 +117,13 @@ Los tags no son obligatorios para que el mod se instale: sirven para marcar cada
    ```
 
 5. Subir el tag a GitHub: `git push origin contexto-lateral--vX.Y.Z`.
+6. Crear el Release sobre ese tag. Antes, escribir las notas en un archivo (en español, sin atribución a herramientas de IA ni datos personales) y comprobar con `git diff --stat <tag anterior> <tag nuevo>` qué cambió de verdad, para no afirmar nada que no sea cierto:
+
+   ```bash
+   gh release create contexto-lateral--vX.Y.Z --verify-tag --title "contexto-lateral X.Y.Z" --notes-file <archivo> --latest
+   ```
+
+   `--verify-tag` hace que falle si el tag no está en GitHub, en lugar de crear uno nuevo desde `main`. `--latest` marca este Release como el último; en uno anterior se usa `--latest=false`.
 
 ---
 
@@ -126,9 +133,9 @@ Los tags no son obligatorios para que el mod se instale: sirven para marcar cada
 
 El merge final se hace siempre en GitHub. Nunca se fusionan ramas localmente hacia `main`.
 
-> **El agente no hace push ni crea PRs, salvo que se lo pidan explícitamente.**
+> **El agente no hace push ni crea PRs ni Releases, salvo que se lo pidan explícitamente.**
 
-Si se usa un agente de IA para preparar un cambio, el agente deja los commits listos de forma local. No empuja al remoto ni interactúa con GitHub para abrir, comentar ni mezclar PRs, salvo que la persona se lo pida explícitamente.
+Si se usa un agente de IA para preparar un cambio, el agente deja los commits listos de forma local. No empuja al remoto ni interactúa con GitHub para abrir, comentar ni mezclar PRs ni para crear Releases, salvo que la persona se lo pida explícitamente.
 
 > **Los commits y los tags no llevan atribución a herramientas de IA.**
 
