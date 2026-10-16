@@ -2,6 +2,7 @@
   "name": "contexto-lateral",
   "version": "0.1.0",
   "author": { "name": "mixzplit" },
+  "repository": "https://github.com/mixzplit/contexto-lateral",
   "license": "MIT",
   "userConfig": {
     "avisarVersionNueva": {
