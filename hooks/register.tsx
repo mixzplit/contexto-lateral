@@ -227,6 +227,33 @@ export const porcentajeDeAgente = (
     : Math.min(100, Math.round((agente.tokens / ventana) * 100))
 }
 
+/** Dónde se recuerdan, entre sesiones, las ventanas que el panel aprendió de cada modelo. */
+const CLAVE_DE_VENTANAS = 'ventanas'
+
+/** Lo guardado viene del disco: solo valen los modelos con una ventana numérica positiva. */
+const leerVentanasGuardadas = async ($: EngineInterface): Promise<Record<string, number>> => {
+  const guardado: unknown = await $.store.get(CLAVE_DE_VENTANAS)
+  const validas: Record<string, number> = {}
+
+  if (typeof guardado === 'object' && guardado !== null && !Array.isArray(guardado)) {
+    for (const [modelo, ventana] of Object.entries(guardado)) {
+      if (typeof ventana === 'number' && Number.isFinite(ventana) && ventana > 0) {
+        validas[modelo] = ventana
+      }
+    }
+  }
+
+  return validas
+}
+
+const recordarVentana = async ($: EngineInterface, modelo: string, ventana: number) => {
+  const guardadas = await leerVentanasGuardadas($)
+
+  if (guardadas[modelo] !== ventana) {
+    await $.store.set(CLAVE_DE_VENTANAS, { ...guardadas, [modelo]: ventana })
+  }
+}
+
 /**
  * No hay una lista de shells en la API: se infieren de tres señales (el resultado del Bash o
  * PowerShell que lo lanzó, el aviso de fin, la lista `background_tasks` del hook Stop), y esta
@@ -577,6 +604,14 @@ export const register: Register = (on, options) => {
     })
 
     try {
+      const guardadas = await leerVentanasGuardadas($)
+      // lo aprendido en esta sesión manda sobre lo guardado
+      await update($, ventanas, previas => ({ ...guardadas, ...previas }))
+    } catch {
+      // sin memoria entre sesiones: las ventanas se vuelven a aprender
+    }
+
+    try {
       const { context, rateLimits } = await $.session.usage()
       await update($, contexto, () => context)
       await update($, limites, () => rateLimits)
@@ -658,6 +693,7 @@ export const register: Register = (on, options) => {
 
           if (ctx && conocidas[uso.model] !== ctx.window) {
             await update($, ventanas, previas => ({ ...previas, [uso.model]: ctx.window }))
+            await recordarVentana($, uso.model, ctx.window)
           }
         }
       } catch {
@@ -866,6 +902,12 @@ export const register: Register = (on, options) => {
                 </Box>
               )
             })}
+            {enCurso.some(a => a.tokens !== null && !conocidas[a.modelo]) && (
+              <Box flexDirection="column">
+                <Text dimColor>{`\n${recortar('Sin barra: ventana del modelo sin dato.', columnas)}`}</Text>
+                <Text dimColor>{recortar('Se aprende cuando corre como principal.', columnas)}</Text>
+              </Box>
+            )}
           </Box>
         )}
 

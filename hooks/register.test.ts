@@ -1676,3 +1676,184 @@ describe('aviso de versión nueva', () => {
     },
   )
 })
+
+describe('ventana de contexto de los agentes', () => {
+  type Alta = Parameters<typeof mock.clock>[0]
+
+  const MODELO = 'claude-haiku-4-5'
+
+  const SPAWN = {
+    tool_use_id: 'toolu_1',
+    prompt: 'mapear la API',
+    description: 'revisar el diff',
+    subagentType: 'general-purpose',
+    provider: { plugin: 'engine', tier: 'core' } as const,
+    parentModel: 'claude-sonnet-5-5',
+    background: true,
+    fork: false,
+  }
+
+  // el motor de los tests no trae almacenamiento: uno en memoria, con la ida y vuelta por JSON del real
+  const conAlmacen = (on: Alta, iniciales: Record<string, unknown> = {}) => {
+    const datos = new Map<string, unknown>(Object.entries(iniciales))
+    on('store.get', (_$, e) => ({ value: datos.get(e.key) }))
+    on('store.set', (_$, e) => {
+      datos.set(e.key, JSON.parse(JSON.stringify(e.value)))
+
+      return { value: undefined }
+    })
+
+    return datos
+  }
+
+  // lo mínimo para que arranque la sesión; lo demás que lee el arranque rechaza y el mod lo traga
+  const conArranque = (on: Alta) => {
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('command.register', () => ({ value: { command: 'contexto' } }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto' }))
+    on('env.get', () => ({ value: undefined }))
+    on('fs.read', () => ({ value: JSON.stringify({ name: 'contexto-lateral', version: '0.1.0' }) }))
+    on('process.run', () => ({
+      value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    }))
+  }
+
+  // un agente en segundo plano del modelo de `MODELO`, cuyo último request llevó 110 mil tokens
+  const conAgente = (on: Alta) => {
+    on('agent.spawn', () => ({ model: MODELO, agentId: 'a2' }))
+    on('session.measure', (_$, e) => ({ changed: e.changed }))
+    mock.clock(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: '',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: {
+          input_tokens: 60_000,
+          output_tokens: 10,
+          cache_read_input_tokens: 50_000,
+          cache_creation_input_tokens: 0,
+          model: MODELO,
+        },
+      }
+    })
+  }
+
+  const iniciar = ($: Engine) =>
+    $.session.start({ cwd: 'C:\\trabajo\\mi-proyecto', surface: 'terminal', isInteractive: true })
+
+  const medirPrincipal = ($: Engine) =>
+    $.session.measure({
+      context: { tokens: 1000, window: 200_000, percent: 1 },
+      rateLimits: [],
+      changed: ['context'],
+    })
+
+  const pasoPrincipal = async ($: Engine) => {
+    for await (const _chunk of $.turn.step({ turnId: 'turno-main', index: 0, model: MODELO, messageCount: 1 })) {
+      // el hook de arriba no emite trozos
+    }
+  }
+
+  const pasoDelAgente = async ($: Engine) => {
+    for await (const _chunk of $.turn.step({
+      turnId: 'turno-a2',
+      index: 0,
+      model: MODELO,
+      messageCount: 1,
+      agentId: 'a2',
+    })) {
+      // idem
+    }
+  }
+
+  test('la ventana que se aprende de un modelo principal se guarda', async ($, on) => {
+    const datos = conAlmacen(on)
+    conAgente(on)
+
+    await medirPrincipal($)
+    await pasoPrincipal($)
+
+    expect(datos.get('ventanas')).toEqual({ [MODELO]: 200_000 })
+  })
+
+  test('guardar la ventana de un modelo no pierde la de los que ya estaban', async ($, on) => {
+    const datos = conAlmacen(on, { ventanas: { 'claude-sonnet-5-5': 1_000_000 } })
+    conAgente(on)
+
+    await medirPrincipal($)
+    await pasoPrincipal($)
+
+    expect(datos.get('ventanas')).toEqual({ 'claude-sonnet-5-5': 1_000_000, [MODELO]: 200_000 })
+  })
+
+  test('al iniciar la sesión recupera lo guardado: un agente que nunca fue principal muestra su barra', async ($, on) => {
+    conAlmacen(on, { ventanas: { [MODELO]: 200_000 } })
+    conArranque(on)
+    conAgente(on)
+
+    await iniciar($)
+    await $.agent.spawn(SPAWN)
+    await pasoDelAgente($)
+
+    const ui = await montar($)
+    const barra = await ui.find({ type: 'Text', text: ' 55%' })
+    expect(barra?.props.color).toBe('success')
+    expect(await ui.find({ type: 'Text', text: /110\.0k de 200\.0k tokens/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Sin barra/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  const GUARDADOS_INVALIDOS: ReadonlyArray<readonly [string, unknown]> = [
+    ['no es un objeto', 'texto'],
+    ['no es nada', null],
+    ['la ventana no es un número', { [MODELO]: 'mucho' }],
+    ['la ventana no es positiva', { [MODELO]: -5 }],
+  ]
+
+  for (const [motivo, guardado] of GUARDADOS_INVALIDOS) {
+    test(`ignora lo guardado si ${motivo}`, async ($, on) => {
+      conAlmacen(on, { ventanas: guardado })
+      conArranque(on)
+      conAgente(on)
+
+      await iniciar($)
+      await $.agent.spawn(SPAWN)
+      await pasoDelAgente($)
+
+      const ui = await montar($)
+      expect(await ui.find({ type: 'Text', text: /110\.0k tokens · ventana sin dato/ })).toBeDefined()
+      await ui.unmount()
+    })
+  }
+
+  test('sin la ventana de un agente, el panel explica por qué no hay barra', async ($, on) => {
+    conAgente(on)
+
+    await $.agent.spawn(SPAWN)
+    await pasoDelAgente($)
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /110\.0k tokens · ventana sin dato/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Sin barra: ventana del modelo sin dato/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Se aprende cuando corre como principal/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('con la ventana conocida el panel no explica nada', async ($, on) => {
+    conAgente(on)
+
+    await medirPrincipal($)
+    await pasoPrincipal($)
+    await $.agent.spawn(SPAWN)
+    await pasoDelAgente($)
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /110\.0k de 200\.0k tokens/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Sin barra/ })).toBeUndefined()
+    await ui.unmount()
+  })
+})
