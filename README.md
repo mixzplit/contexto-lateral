@@ -1,5 +1,9 @@
 # contexto-lateral
 
+[![Licencia: MIT](https://img.shields.io/github/license/mixzplit/contexto-lateral)](LICENSE)
+[![Versión](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmixzplit%2Fcontexto-lateral%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=versi%C3%B3n)](https://github.com/mixzplit/contexto-lateral/tags)
+[![Último commit](https://img.shields.io/github/last-commit/mixzplit/contexto-lateral)](https://github.com/mixzplit/contexto-lateral/commits/main)
+
 Un panel lateral para Claude Code que muestra, en vivo, la ventana de contexto, los modelos usados, los tokens consumidos, los agentes y shells en segundo plano, el proyecto y las cuotas de uso.
 
 ## Instalación rápida
