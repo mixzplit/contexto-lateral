@@ -126,9 +126,9 @@ Los tags no son obligatorios para que el mod se instale: sirven para marcar cada
 
 El merge final se hace siempre en GitHub. Nunca se fusionan ramas localmente hacia `main`.
 
-> **El agente no hace push ni crea PRs.**
+> **El agente no hace push ni crea PRs, salvo que se lo pidan explícitamente.**
 
-Si se usa un agente de IA para preparar un cambio, el agente deja los commits listos de forma local. El `git push`, la apertura del PR y el merge los hace siempre una persona.
+Si se usa un agente de IA para preparar un cambio, el agente deja los commits listos de forma local. No empuja al remoto ni interactúa con GitHub para abrir, comentar ni mezclar PRs, salvo que la persona se lo pida explícitamente.
 
 > **Los commits y los tags no llevan atribución a herramientas de IA.**
 
