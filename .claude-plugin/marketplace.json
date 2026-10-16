@@ -1,0 +1,6 @@
+{
+  "name": "side-context",
+  "owner": { "name": "mixzplit" },
+  "description": "Side pane with the live context window, the models used and the tokens spent in the session",
+  "plugins": [{ "name": "contexto-lateral", "source": "./" }]
+}

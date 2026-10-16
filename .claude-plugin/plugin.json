@@ -1,0 +1,16 @@
+{
+  "name": "contexto-lateral",
+  "version": "0.1.0",
+  "author": { "name": "mixzplit" },
+  "license": "MIT",
+  "userConfig": {
+    "avisarVersionNueva": {
+      "type": "boolean",
+      "title": "Avisar de versiones nuevas",
+      "description": "Una vez al día consulta en GitHub si hay una versión nueva del mod y la muestra en el panel. No instala nada.",
+      "default": true
+    }
+  },
+  "description": "Side pane with the live context window, the models used and the tokens spent in the session",
+  "types": "./types/index.d.ts"
+}
