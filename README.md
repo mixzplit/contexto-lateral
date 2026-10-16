@@ -49,7 +49,7 @@
 - La versión de Claude Code, el modelo principal y la versión de este mod.
 - El contexto usado, con su barra y el porcentaje.
 - Los modelos usados, con sus turnos y sus tokens de entrada, salida y caché.
-- Los agentes y los shells que corren en segundo plano, mientras corren.
+- Los agentes y los shells que corren en segundo plano, mientras corren. De cada agente se ve el contexto que usa; la barra con el porcentaje aparece cuando el mod conoce la ventana de su modelo. Esa ventana se aprende cuando el modelo corre como principal y se recuerda entre sesiones; mientras no se conoce, el panel muestra solo los tokens.
 - El proyecto, la rama y el worktree.
 - Las cuotas de uso de 5 horas y semanal.
 
@@ -76,7 +76,7 @@ El mod se instala por usuario, no dentro de tus proyectos. En esta tabla, `~` es
 | El registro de lo instalado | `~/.claude/plugins/installed_plugins.json` y `~/.claude/plugins/known_marketplaces.json` |
 | Lo que Claude Code tiene declarado y habilitado | `extraKnownMarketplaces` y `enabledPlugins` en `~/.claude/settings.json` |
 | La opción de avisos de versión, si la cambias | `pluginConfigs` en `~/.claude/settings.json` |
-| Lo que el mod recuerda entre sesiones (cuándo consultó por última vez) | Un archivo JSON propio del mod, dentro de la carpeta de configuración de Claude Code |
+| Lo que el mod recuerda entre sesiones (cuándo consultó por última vez y la ventana de contexto que aprendió de cada modelo) | Un archivo JSON propio del mod, dentro de la carpeta de configuración de Claude Code |
 
 Si defines la variable `CLAUDE_CODE_PLUGIN_CACHE_DIR`, Claude Code usa esa carpeta en lugar de `~/.claude/plugins`.
 
