@@ -7,6 +7,7 @@ import {
   INACTIVIDAD_DE_SHELL_MS,
   INACTIVIDAD_DE_WORKFLOW_MS,
   RETIRADOS_RECORDADOS,
+  REVISION_DE_CAMBIOS_MS,
   REVISION_DE_MCP_MS,
   REVISION_DE_SHELLS_MS,
   VENTANA_DE_RETIRO_MS,
@@ -16,6 +17,7 @@ import {
   GLIFOS_FINOS,
   anchoParaTerminal,
   armarBarra,
+  cambiosCabenEnUnaLinea,
   colorDeContexto,
   colorDeModelo,
   conTokensDeAgente,
@@ -2010,6 +2012,309 @@ describe('servidores MCP', () => {
 
     segunda.abrir()
     await asentar()
+  })
+})
+
+describe('cambios de git', () => {
+  type Alta = Parameters<typeof mock.clock>[0]
+
+  type Estado = { sha: string; rama: string; sucios: number; cambiados: number; sinGit?: boolean; falla?: boolean }
+
+  // la consulta corre en segundo plano: se le dan vueltas para que termine antes de mirar
+  const asentar = async () => {
+    for (let i = 0; i < 100; i += 1) {
+      await Promise.resolve()
+    }
+  }
+
+  const archivos = (cantidad: number): string[] => Array.from({ length: cantidad }, (_, i) => `archivo-${i}.ts`)
+
+  // un repositorio falso: `git` contesta según `estado` (que el test puede cambiar) y `llamadas` guarda lo que se le pidió
+  const conRepositorio = (on: Alta, estado: Estado) => {
+    const llamadas: string[] = []
+    const ok = (lineas: string[]) => ({
+      value: { exitCode: 0, stdout: lineas.join('\n'), stderr: '', ...sinTruncar },
+    })
+    const falla = { value: { exitCode: 128, stdout: '', stderr: 'fatal', ...sinTruncar } }
+
+    on('env.get', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('command.register', () => ({ value: { command: 'contexto' } }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto' }))
+    on('fs.read', () => ({ value: JSON.stringify({ name: 'contexto-lateral', version: '0.2.0' }) }))
+    on('agent.list', () => ({ value: [] }))
+    on('turn.complete', (_$, e) => ({ text: e.answer, usage: e.usage }))
+    on('process.run', (_$, e) => {
+      const args = e.argv.slice(1).join(' ')
+      llamadas.push(args)
+
+      if (e.argv[0] !== 'git' || estado.sinGit) {
+        return falla
+      }
+      if (args.startsWith('rev-parse HEAD')) {
+        return ok([estado.sha, estado.rama])
+      }
+      if (args.includes('status')) {
+        return estado.falla ? falla : ok(archivos(estado.sucios).map(a => ` M ${a}`))
+      }
+      if (args.startsWith('diff --name-only')) {
+        return ok(archivos(estado.cambiados))
+      }
+
+      return falla
+    })
+
+    return { llamadas, consultasDeEstado: () => llamadas.filter(l => l.includes('status')).length }
+  }
+
+  const iniciar = ($: Engine) =>
+    $.session.start({ cwd: 'C:\\trabajo\\mi-proyecto', surface: 'terminal', isInteractive: true })
+
+  const completarTurno = ($: Engine, id: string) =>
+    $.turn.complete({
+      answer: 'listo',
+      durationMs: 10,
+      isAborted: false,
+      turnId: id,
+      reason: 'answer',
+      usage: { ...USO, model: 'claude-sonnet-5-5' },
+    })
+
+  const BASE: Estado = { sha: 'aaa111', rama: 'main', sucios: 0, cambiados: 0 }
+
+  test('al abrir la sesión muestra en rojo los archivos que faltan por comitear', async ($, on) => {
+    conRepositorio(on, { ...BASE, sucios: 3 })
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    expect((await ui.find({ type: 'Text', text: /^3$/ }))?.props.color).toBe('error')
+    await ui.unmount()
+  })
+
+  test('los archivos comiteados desde que abrió la sesión salen en verde', async ($, on) => {
+    const estado = { ...BASE }
+    conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.sha = 'bbb222'
+    estado.cambiados = 5
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect((await ui.find({ type: 'Text', text: /^5$/ }))?.props.color).toBe('success')
+    await ui.unmount()
+  })
+
+  test('cada número lleva su etiqueta para que se sepa de qué es', async ($, on) => {
+    const estado = { ...BASE, sucios: 3 }
+    conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.sha = 'bbb222'
+    estado.cambiados = 5
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^archivos: $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^archivos:$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^ sin comitear$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ comiteados$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('en un panel angosto «archivos:» pasa a su propia línea para no cortar las etiquetas', async ($, on) => {
+    conRepositorio(on, { ...BASE, sucios: 5 })
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($, { ...PROPS, bodyColumns: 36 })
+    expect(await ui.find({ type: 'Text', text: /^archivos:$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^archivos: $/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^ sin comitear$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ comiteados$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('los contadores caben en una línea según el ancho del panel', () => {
+    expect(cambiosCabenEnUnaLinea({ sinComitear: 5, comiteados: 0 }, 38)).toBe(true)
+    expect(cambiosCabenEnUnaLinea({ sinComitear: 5, comiteados: 0 }, 37)).toBe(false)
+    expect(cambiosCabenEnUnaLinea({ sinComitear: 12, comiteados: 12 }, 40)).toBe(true)
+    expect(cambiosCabenEnUnaLinea({ sinComitear: 12, comiteados: 12 }, 39)).toBe(false)
+    // «comiteado» en singular es un carácter más corto
+    expect(cambiosCabenEnUnaLinea({ sinComitear: 5, comiteados: 1 }, 37)).toBe(true)
+  })
+
+  test('con un solo archivo comiteado la etiqueta va en singular', async ($, on) => {
+    const estado = { ...BASE }
+    conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.sha = 'bbb222'
+    estado.cambiados = 1
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^ comiteado$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ comiteados$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('el número de lo comiteado se cuenta desde el commit que había al abrir la sesión', async ($, on) => {
+    const estado = { ...BASE }
+    const { llamadas } = conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.sha = 'bbb222'
+    estado.cambiados = 2
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    expect(llamadas).toContain('diff --name-only aaa111 bbb222')
+  })
+
+  test('sin nada que comitear ni comiteado los números van sin color', async ($, on) => {
+    conRepositorio(on, BASE)
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    const ceros = await ui.findAll({ type: 'Text', text: /^0$/ })
+    expect(ceros).toHaveLength(2)
+    expect(ceros.every(c => c.props.color === undefined)).toBe(true)
+    await ui.unmount()
+  })
+
+  test('consulta como mucho una vez cada 15 segundos y solo si hubo actividad', async ($, on) => {
+    const { consultasDeEstado } = conRepositorio(on, { ...BASE, sucios: 1 })
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    expect(consultasDeEstado()).toBe(1)
+    expect(REVISION_DE_CAMBIOS_MS).toBe(15 * 1000)
+
+    for (let i = 0; i < 5; i += 1) {
+      await completarTurno($, `turno-${i}`)
+    }
+    await asentar()
+    expect(consultasDeEstado()).toBe(1)
+
+    await reloj.advance(REVISION_DE_CAMBIOS_MS - 1)
+    await asentar()
+    expect(consultasDeEstado()).toBe(1)
+
+    await reloj.advance(1)
+    await asentar()
+    expect(consultasDeEstado()).toBe(2)
+
+    // quieta: sin actividad no vuelve a consultar
+    await reloj.advance(REVISION_DE_CAMBIOS_MS * 4)
+    await asentar()
+    expect(consultasDeEstado()).toBe(2)
+  })
+
+  test('git status no toma el lock del índice: no le estorba a quien comitea a la vez', async ($, on) => {
+    const { llamadas } = conRepositorio(on, BASE)
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    expect(llamadas).toContain('--no-optional-locks status --porcelain --untracked-files=all')
+  })
+
+  test('al cambiar de rama lo comiteado vuelve a contar desde cero', async ($, on) => {
+    const estado = { ...BASE }
+    const { llamadas } = conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.rama = 'otra'
+    estado.sha = 'ccc333'
+    estado.cambiados = 7
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    expect(llamadas.some(l => l.startsWith('diff'))).toBe(false)
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^7$/ })).toBeUndefined()
+    await ui.unmount()
+
+    estado.sha = 'ddd444'
+    estado.cambiados = 2
+    await completarTurno($, 'turno-2')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    expect(llamadas).toContain('diff --name-only ccc333 ddd444')
+  })
+
+  test('sin git no muestra los números ni llama a git status', async ($, on) => {
+    const { consultasDeEstado } = conRepositorio(on, { ...BASE, sinGit: true })
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    expect(consultasDeEstado()).toBe(0)
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^0$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /comite/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /archivos/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('si una consulta falla el panel conserva el último número', async ($, on) => {
+    const estado = { ...BASE, sucios: 3 }
+    conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.falla = true
+    estado.sucios = 9
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^3$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^9$/ })).toBeUndefined()
+    await ui.unmount()
   })
 })
 

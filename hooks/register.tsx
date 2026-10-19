@@ -4,6 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type {
   AgenteEnCurso,
   AgenteRetirado,
+  BaseDeCambios,
+  CambiosDeGit,
   Contexto,
   LimiteDeUso,
   ModeloUsado,
@@ -29,6 +31,9 @@ const limites = atom({ plugin: 'contexto-lateral', key: 'limites' } as const, []
 const shells = atom({ plugin: 'contexto-lateral', key: 'shells' } as const, [])
 const mcp = atom({ plugin: 'contexto-lateral', key: 'mcp' } as const, null)
 const mcpConsultando = atom({ plugin: 'contexto-lateral', key: 'mcpConsultando' } as const, false)
+const cambios = atom({ plugin: 'contexto-lateral', key: 'cambios' } as const, null)
+const baseDeCambios = atom({ plugin: 'contexto-lateral', key: 'baseDeCambios' } as const, null)
+const cambiosPorRevisar = atom({ plugin: 'contexto-lateral', key: 'cambiosPorRevisar' } as const, false)
 
 type Uso = {
   input_tokens: number
@@ -662,6 +667,87 @@ const revisarMcp = async ($: EngineInterface) => {
   }
 }
 
+/** `git status` recorre el árbol de trabajo: se lo consulta como mucho una vez por intervalo, y solo si hubo actividad. */
+export const REVISION_DE_CAMBIOS_MS = 15 * 1000
+
+const contarLineas = (texto: string): number => texto.split(/\r?\n/).filter(linea => linea.trim() !== '').length
+
+const ROTULO_DE_ARCHIVOS = 'archivos: '
+const ETIQUETA_SIN_COMITEAR = ' sin comitear'
+const SEPARACION_DE_CAMBIOS = '  '
+const etiquetaDeComiteados = (cantidad: number): string => (cantidad === 1 ? ' comiteado' : ' comiteados')
+
+/** «archivos: 5 sin comitear  0 comiteados» va en una línea; si el panel es angosto, «archivos:» va arriba y los números debajo. */
+export const cambiosCabenEnUnaLinea = ({ sinComitear, comiteados }: CambiosDeGit, columnas: number): boolean =>
+  ROTULO_DE_ARCHIVOS.length +
+    `${sinComitear}`.length +
+    ETIQUETA_SIN_COMITEAR.length +
+    SEPARACION_DE_CAMBIOS.length +
+    `${comiteados}`.length +
+    etiquetaDeComiteados(comiteados).length <=
+  columnas
+
+/**
+ * Los archivos sin comitear (los que `git status` da por sucios) y los que cambiaron en commits desde el que había al
+ * abrir la sesión. Esa base se reinicia al cambiar de rama: entre ramas la comparación no habla de la sesión.
+ * `--no-optional-locks` evita que `git status` tome el lock del índice y le estorbe a quien comitea a la vez.
+ * Cualquier falla deja lo último que se leyó.
+ */
+const refrescarCambios = async ($: EngineInterface) => {
+  try {
+    const raiz = await $.session.root()
+    const cabeza = await git($, raiz, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'])
+    const [sha, rama] = cabeza?.split(/\r?\n/) ?? []
+
+    if (!sha || !rama) {
+      return
+    }
+
+    const previa = await read($, baseDeCambios)
+    const base: BaseDeCambios = previa !== null && previa.rama === rama ? previa : { rama, sha }
+    if (base !== previa) {
+      await update($, baseDeCambios, () => base)
+    }
+
+    const sucios = await git($, raiz, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'])
+    const comiteados = base.sha === sha ? '' : await git($, raiz, ['diff', '--name-only', base.sha, sha])
+    if (sucios === null || comiteados === null) {
+      return
+    }
+
+    const nuevos: CambiosDeGit = { sinComitear: contarLineas(sucios), comiteados: contarLineas(comiteados) }
+    const actuales = await read($, cambios)
+
+    if (JSON.stringify(actuales) !== JSON.stringify(nuevos)) {
+      await update($, cambios, () => nuevos)
+    }
+  } catch {
+    // sin git o sin permiso: el panel conserva lo último que leyó, o no muestra los números
+  }
+}
+
+/** Solo consulta si hubo actividad desde la última vez: una sesión quieta no gasta ni un `git status`. */
+const revisarCambios = async ($: EngineInterface) => {
+  try {
+    if (await read($, cambiosPorRevisar)) {
+      await update($, cambiosPorRevisar, () => false)
+      await refrescarCambios($)
+    }
+  } catch {
+    // observar nunca debe romper la sesión
+  }
+}
+
+const marcarCambiosPorRevisar = async ($: EngineInterface) => {
+  try {
+    if (!(await read($, cambiosPorRevisar))) {
+      await update($, cambiosPorRevisar, () => true)
+    }
+  } catch {
+    // sin la marca: el próximo turno la vuelve a poner
+  }
+}
+
 export const ANCHO_DEL_PANEL = 44
 const ANCHO_MAXIMO_DE_LA_BARRA = 40
 
@@ -684,6 +770,13 @@ export const register: Register = (on, options) => {
     void revisarMcp($)
     $.clock.every(REVISION_DE_MCP_MS, () => {
       void revisarMcp($)
+    })
+
+    // en segundo plano: la primera lectura fija el commit desde el que se cuentan los de la sesión
+    await update($, cambiosPorRevisar, () => true)
+    void revisarCambios($)
+    $.clock.every(REVISION_DE_CAMBIOS_MS, () => {
+      void revisarCambios($)
     })
 
     try {
@@ -841,6 +934,9 @@ export const register: Register = (on, options) => {
 
     const resultado = await next(e)
 
+    // también los agentes editan archivos: cualquier turno avisa que puede haber cambios
+    await marcarCambiosPorRevisar($)
+
     if (e.agentId === undefined) {
       await refrescarProyecto($)
       await reconciliarAgentes($)
@@ -858,6 +954,7 @@ export const register: Register = (on, options) => {
     const nueva: string | null = await read($, versionNueva)
     const principal: string | null = await read($, modeloPrincipal)
     const donde: Proyecto | null = await read($, proyecto)
+    const cambiosGit: CambiosDeGit | null = await read($, cambios)
     const enCurso: AgenteEnCurso[] = await read($, agentes)
     const conocidas: Record<string, number> = await read($, ventanas)
     const reportados: LimiteDeUso[] = await read($, limites)
@@ -869,6 +966,7 @@ export const register: Register = (on, options) => {
     const primeraLecturaDeMcp = servidores === null && consultandoMcp
 
     const columnas = e.props.bodyColumns ?? ANCHO_DEL_PANEL
+    const cambiosEnUnaLinea = cambiosGit !== null && cambiosCabenEnUnaLinea(cambiosGit, columnas)
     const ancho = Math.max(10, Math.min(ANCHO_MAXIMO_DE_LA_BARRA, columnas - 8))
     const hayLectura = ctx !== null && ctx.percent !== undefined && ctx.tokens !== undefined
     const color = hayLectura ? colorDeContexto(ctx.percent ?? 0) : 'subtle'
@@ -953,6 +1051,31 @@ export const register: Register = (on, options) => {
             <Text dimColor>{recortar(`rama: ${donde.rama ?? 'sin git'}`, columnas)}</Text>
             {donde.worktree !== null && (
               <Text dimColor>{recortar(`worktree: ${donde.worktree}`, columnas)}</Text>
+            )}
+            {cambiosGit !== null && (
+              <Box flexDirection="column">
+                {!cambiosEnUnaLinea && <Text dimColor>{ROTULO_DE_ARCHIVOS.trimEnd()}</Text>}
+                <Box>
+                  {cambiosEnUnaLinea && <Text dimColor>{ROTULO_DE_ARCHIVOS}</Text>}
+                  <Text
+                    color={cambiosGit.sinComitear > 0 ? 'error' : undefined}
+                    dimColor={cambiosGit.sinComitear === 0}
+                    bold={cambiosGit.sinComitear > 0}
+                  >
+                    {`${cambiosGit.sinComitear}`}
+                  </Text>
+                  <Text dimColor>{ETIQUETA_SIN_COMITEAR}</Text>
+                  <Text>{SEPARACION_DE_CAMBIOS}</Text>
+                  <Text
+                    color={cambiosGit.comiteados > 0 ? 'success' : undefined}
+                    dimColor={cambiosGit.comiteados === 0}
+                    bold={cambiosGit.comiteados > 0}
+                  >
+                    {`${cambiosGit.comiteados}`}
+                  </Text>
+                  <Text dimColor>{etiquetaDeComiteados(cambiosGit.comiteados)}</Text>
+                </Box>
+              </Box>
             )}
           </Box>
         )}
