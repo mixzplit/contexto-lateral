@@ -8,6 +8,7 @@ import type {
   LimiteDeUso,
   ModeloUsado,
   Proyecto,
+  ServidorMcp,
   ShellEnSegundoPlano,
   TareaEnSegundoPlano,
 } from '../types'
@@ -26,6 +27,8 @@ const retirados = atom({ plugin: 'contexto-lateral', key: 'retirados' } as const
 const ventanas = atom({ plugin: 'contexto-lateral', key: 'ventanas' } as const, {})
 const limites = atom({ plugin: 'contexto-lateral', key: 'limites' } as const, [])
 const shells = atom({ plugin: 'contexto-lateral', key: 'shells' } as const, [])
+const mcp = atom({ plugin: 'contexto-lateral', key: 'mcp' } as const, null)
+const mcpConsultando = atom({ plugin: 'contexto-lateral', key: 'mcpConsultando' } as const, false)
 
 type Uso = {
   input_tokens: number
@@ -585,6 +588,80 @@ const soltarShell = async ($: EngineInterface, id: string) => {
   }
 }
 
+/** `claude mcp list` conecta cada servidor y tarda unos segundos: se lo consulta poco, no en cada redibujado. */
+export const REVISION_DE_MCP_MS = 10 * 60 * 1000
+
+const TIEMPO_MAXIMO_DE_MCP_MS = 60 * 1000
+
+/** Lo que viene con Claude Code (los servidores de los plugins y los conectores de claude.ai) no se muestra. */
+const PREFIJOS_DE_MCP_AJENOS = ['plugin:', 'claude.ai ']
+
+export const esMcpDelUsuario = (nombre: string): boolean =>
+  !PREFIJOS_DE_MCP_AJENOS.some(prefijo => nombre.startsWith(prefijo))
+
+// «<nombre>: <destino> - <marca> <estado>». La marca (✔, ✘, !) no se compara: según la consola puede llegar deformada.
+const LINEA_DE_MCP = /^(.+?): (.*) - \S+ (.+)$/
+
+/** Los servidores de la persona que lista `claude mcp list`; lo que no tiene la forma de una línea (avisos, encabezado) se ignora. */
+export const servidoresMcp = (salida: string): ServidorMcp[] =>
+  salida.split(/\r?\n/).flatMap(linea => {
+    const partes = LINEA_DE_MCP.exec(linea.trim())
+    const nombre = partes?.[1]
+
+    return partes && nombre && esMcpDelUsuario(nombre)
+      ? [{ nombre, conectado: /^Connected\b/.test(partes[3] ?? '') }]
+      : []
+  })
+
+/**
+ * No hay una lista de servidores en la API del motor: se pregunta a `claude mcp list`, que sale con 0 aunque haya
+ * servidores caídos. Cualquier falla deja lo último que se leyó. Con CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC no se
+ * consulta, porque la comprobación conecta con cada servidor.
+ */
+const refrescarMcp = async ($: EngineInterface) => {
+  try {
+    if (await sinTraficoInnecesario($)) {
+      return
+    }
+
+    await update($, mcpConsultando, () => true)
+
+    try {
+      const resultado = await $.process.run(['claude', 'mcp', 'list'], { timeoutMs: TIEMPO_MAXIMO_DE_MCP_MS })
+      if (resultado.exitCode !== 0) {
+        return
+      }
+
+      const nuevos = servidoresMcp(resultado.stdout)
+      const actuales = await read($, mcp)
+
+      if (JSON.stringify(actuales) !== JSON.stringify(nuevos)) {
+        await update($, mcp, () => nuevos)
+      }
+    } finally {
+      await update($, mcpConsultando, () => false)
+    }
+  } catch {
+    // sin la consulta: el panel conserva lo último que leyó, o no muestra la sección
+  }
+}
+
+let leyendoMcp = false
+
+/** Una consulta que tarda no se pisa con la siguiente: la periódica espera a que termine la anterior. */
+const revisarMcp = async ($: EngineInterface) => {
+  if (leyendoMcp) {
+    return
+  }
+
+  leyendoMcp = true
+  try {
+    await refrescarMcp($)
+  } finally {
+    leyendoMcp = false
+  }
+}
+
 export const ANCHO_DEL_PANEL = 44
 const ANCHO_MAXIMO_DE_LA_BARRA = 40
 
@@ -601,6 +678,12 @@ export const register: Register = (on, options) => {
 
     $.clock.every(REVISION_DE_SHELLS_MS, () => {
       void reconciliarShells($)
+    })
+
+    // en segundo plano: la consulta tarda unos segundos y no debe demorar el arranque
+    void revisarMcp($)
+    $.clock.every(REVISION_DE_MCP_MS, () => {
+      void revisarMcp($)
     })
 
     try {
@@ -780,6 +863,10 @@ export const register: Register = (on, options) => {
     const reportados: LimiteDeUso[] = await read($, limites)
     const ahora = await $.clock.now()
     const enSegundoPlano = (await read($, shells)).filter(s => shellSigueEnCurso(s, ahora))
+    const servidores: ServidorMcp[] | null = await read($, mcp)
+    const consultandoMcp: boolean = await read($, mcpConsultando)
+    // el aviso es solo para la primera lectura: con una lista ya dibujada, refrescarla no debe mover el panel
+    const primeraLecturaDeMcp = servidores === null && consultandoMcp
 
     const columnas = e.props.bodyColumns ?? ANCHO_DEL_PANEL
     const ancho = Math.max(10, Math.min(ANCHO_MAXIMO_DE_LA_BARRA, columnas - 8))
@@ -867,6 +954,21 @@ export const register: Register = (on, options) => {
             {donde.worktree !== null && (
               <Text dimColor>{recortar(`worktree: ${donde.worktree}`, columnas)}</Text>
             )}
+          </Box>
+        )}
+
+        {(primeraLecturaDeMcp || (servidores !== null && servidores.length > 0)) && (
+          <Box flexDirection="column">
+            <Text bold>{'\n'}MCP</Text>
+            {primeraLecturaDeMcp && <Text dimColor>Consultando estados…</Text>}
+            {(servidores ?? []).map(s => (
+              <Box key={s.nombre}>
+                <Text color={s.conectado ? 'success' : 'error'} bold>
+                  {s.conectado ? '✔ ' : '✘ '}
+                </Text>
+                <Text wrap="truncate-end">{recortar(s.nombre, Math.max(1, columnas - 2))}</Text>
+              </Box>
+            ))}
           </Box>
         )}
 

@@ -7,6 +7,7 @@ import {
   INACTIVIDAD_DE_SHELL_MS,
   INACTIVIDAD_DE_WORKFLOW_MS,
   RETIRADOS_RECORDADOS,
+  REVISION_DE_MCP_MS,
   REVISION_DE_SHELLS_MS,
   VENTANA_DE_RETIRO_MS,
   acumular,
@@ -19,6 +20,7 @@ import {
   colorDeModelo,
   conTokensDeAgente,
   entradaDelRequest,
+  esMcpDelUsuario,
   etiquetaDeShell,
   formatear,
   idDeTareaTerminada,
@@ -28,6 +30,7 @@ import {
   porcentajeDeAgente,
   recortar,
   shellSigueEnCurso,
+  servidoresMcp,
   shellsDeLasTareas,
   sigueEnCurso,
   tareaLanzadaPor,
@@ -1675,6 +1678,339 @@ describe('aviso de versión nueva', () => {
       expect(toasts).toEqual([])
     },
   )
+})
+
+describe('servidores MCP', () => {
+  type Alta = Parameters<typeof mock.clock>[0]
+
+  const SALIDA = [
+    'Checking MCP server health…',
+    '',
+    "[mcp-sdk] SEP-2352: stored OAuth credential has no 'issuer' stamp (pre-upgrade storage). Isolation is inactive.",
+    'claude.ai Docs: https://docs.example.com/mcp - ✔ Connected',
+    'plugin:equipo:chat: https://chat.example.com/mcp (HTTP) - ! Needs authentication',
+    'plugin:equipo:agenda:  (HTTP) - - Not configured',
+    'notas: https://notas.example.com/mcp (HTTP) - ✔ Connected',
+    'memoria: memoria mcp --tools=agent - ✔ Connected',
+    'tablero: https://tablero.example.com/mcp (HTTP) - ✘ Failed to connect — Incompatible auth server',
+    'wiki: https://wiki.example.com/mcp (HTTP) - ! Needs authentication',
+  ].join('\n')
+
+  // la consulta corre en segundo plano: se le dan vueltas para que termine antes de mirar
+  const asentar = async () => {
+    for (let i = 0; i < 100; i += 1) {
+      await Promise.resolve()
+    }
+  }
+
+  // una sesión cuyo `claude mcp list` contesta lo que diga `salida()` cuando `espera()` se cumple; devuelve cuántas veces se lo consultó
+  const conSesionMcp = (
+    on: Alta,
+    salida: () => { exitCode: number; stdout: string },
+    espera: () => Promise<void> = async () => {},
+  ) => {
+    const entorno: Record<string, string | undefined> = {}
+    const consultas = { cuenta: 0 }
+    on('env.get', (_$, e) => ({ value: entorno[e.name] }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('command.register', () => ({ value: { command: 'contexto' } }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto' }))
+    on('fs.read', () => ({ value: JSON.stringify({ name: 'contexto-lateral', version: '0.2.0' }) }))
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === 'claude') {
+        consultas.cuenta += 1
+        await espera()
+
+        return { value: { ...salida(), stderr: '', ...sinTruncar } }
+      }
+
+      return { value: { exitCode: 1, stdout: '', stderr: '', ...sinTruncar } }
+    })
+
+    return { consultas, entorno }
+  }
+
+  const iniciar = ($: Engine) =>
+    $.session.start({ cwd: 'C:\\trabajo\\mi-proyecto', surface: 'terminal', isInteractive: true })
+
+  test('de la lista solo quedan los servidores de la persona, cada uno con su estado', () => {
+    expect(servidoresMcp(SALIDA)).toEqual([
+      { nombre: 'notas', conectado: true },
+      { nombre: 'memoria', conectado: true },
+      { nombre: 'tablero', conectado: false },
+      { nombre: 'wiki', conectado: false },
+    ])
+  })
+
+  test('los servidores de plugins y los conectores de claude.ai no cuentan como de la persona', () => {
+    expect(esMcpDelUsuario('plugin:equipo:chat')).toBe(false)
+    expect(esMcpDelUsuario('claude.ai Docs')).toBe(false)
+    expect(esMcpDelUsuario('notas')).toBe(true)
+    expect(esMcpDelUsuario('mi-plugin-propio')).toBe(true)
+  })
+
+  test('una marca deformada por la consola no cambia el estado, y las líneas con CRLF se leen igual', () => {
+    const salida =
+      'notas: https://notas.example.com/mcp (HTTP) - âœ" Connected\r\nwiki: https://wiki.example.com/mcp - âœ˜ Failed to connect\r\n'
+
+    expect(servidoresMcp(salida)).toEqual([
+      { nombre: 'notas', conectado: true },
+      { nombre: 'wiki', conectado: false },
+    ])
+  })
+
+  test('sin servidores de la persona, la lista queda vacía', () => {
+    expect(servidoresMcp('Checking MCP server health…\n')).toEqual([])
+    expect(servidoresMcp('')).toEqual([])
+  })
+
+  test('el panel muestra un tick verde por servidor conectado y una cruz roja por el que no, sin los ajenos', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeDefined()
+    const ticks = await ui.findAll({ type: 'Text', text: /^✔ $/ })
+    const cruces = await ui.findAll({ type: 'Text', text: /^✘ $/ })
+    expect(ticks.map(t => t.props.color)).toEqual(['success', 'success'])
+    expect(cruces.map(c => c.props.color)).toEqual(['error', 'error'])
+    expect(await ui.find({ type: 'Text', text: 'notas' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'tablero' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /chat|Docs|agenda/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('las cuotas siguen siendo lo último del panel con la sección MCP', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    on('session.measure', (_$, e) => ({ changed: e.changed }))
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await $.session.measure({
+      context: { window: 100_000 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 34, resetsAt: aISO(6, 15) },
+        { kind: 'seven_day', percentUsed: 12, resetsAt: aISO(9, 8, 30) },
+      ],
+      changed: ['rateLimits'],
+    })
+    await asentar()
+
+    const ui = await montar($)
+    const nodos = aplanar(await ui.drawn())
+    const textoDe = (n: Nodo) => (n.children ?? []).filter(h => typeof h === 'string').join('')
+    const posicionDe = (texto: RegExp) => nodos.findIndex(n => n.type === 'Text' && texto.test(textoDe(n)))
+
+    const seccion = posicionDe(/^\nMCP$/)
+    const espaciador = nodos.findIndex(n => n.type === 'Box' && n.props?.flexGrow === 1)
+    const cuotas = posicionDe(/^\nCuotas de uso$/)
+
+    expect(seccion).toBeGreaterThan(-1)
+    expect(espaciador).toBeGreaterThan(seccion)
+    expect(cuotas).toBeGreaterThan(espaciador)
+    expect(textoDe(nodos.filter(n => n.type === 'Text').at(-1) ?? {})).toBe(' 12%')
+    await ui.unmount()
+  })
+
+  test('la sección MCP va después del proyecto y antes de los agentes en curso y de los shells', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    on('agent.spawn', () => ({ model: 'claude-haiku-4-5', agentId: 'a1' }))
+    on('tool.call', (_$, e) =>
+      e.tool === 'Bash' ? { result: { backgroundTaskId: 'b1' } } : { result: {} },
+    )
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await $.agent.spawn({
+      tool_use_id: 'toolu_1',
+      prompt: 'mapear la API',
+      description: 'revisar el diff',
+      subagentType: 'general-purpose',
+      provider: { plugin: 'engine', tier: 'core' } as const,
+      parentModel: 'claude-sonnet-5-5',
+      background: true,
+      fork: false,
+    })
+    await $.tool.call({ tool: 'Bash', command: 'pnpm dev', run_in_background: true })
+    await asentar()
+
+    const ui = await montar($)
+    const nodos = aplanar(await ui.drawn())
+    const textoDe = (n: Nodo) => (n.children ?? []).filter(h => typeof h === 'string').join('')
+    const posicionDe = (texto: RegExp) => nodos.findIndex(n => n.type === 'Text' && texto.test(textoDe(n)))
+
+    const proyecto = posicionDe(/^\nProyecto$/)
+    const seccion = posicionDe(/^\nMCP$/)
+    const agentes = posicionDe(/^\nAgentes en curso \(1\)$/)
+    const shells = posicionDe(/^\nShells en segundo plano \(1\)$/)
+
+    expect(proyecto).toBeGreaterThan(-1)
+    expect(seccion).toBeGreaterThan(proyecto)
+    expect(agentes).toBeGreaterThan(seccion)
+    expect(shells).toBeGreaterThan(agentes)
+    await ui.unmount()
+  })
+
+  test('sin servidores de la persona, el panel no dibuja la sección', async ($, on) => {
+    conSesionMcp(on, () => ({
+      exitCode: 0,
+      stdout: 'plugin:equipo:chat: https://chat.example.com/mcp (HTTP) - ✔ Connected',
+    }))
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('consulta al abrir la sesión y vuelve a hacerlo cada 10 minutos, no antes', async ($, on) => {
+    const { consultas } = conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    expect(consultas.cuenta).toBe(1)
+    expect(REVISION_DE_MCP_MS).toBe(10 * 60 * 1000)
+
+    await reloj.advance(REVISION_DE_MCP_MS - 1)
+    await asentar()
+    expect(consultas.cuenta).toBe(1)
+
+    await reloj.advance(1)
+    await asentar()
+    expect(consultas.cuenta).toBe(2)
+  })
+
+  test('el estado se actualiza con cada consulta: el servidor que se cae pasa a cruz roja', async ($, on) => {
+    let salida = 'notas: https://notas.example.com/mcp (HTTP) - ✔ Connected'
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: salida }))
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    const antes = await montar($)
+    expect(await antes.find({ type: 'Text', text: /^✔ $/ })).toBeDefined()
+    await antes.unmount()
+
+    salida = 'notas: https://notas.example.com/mcp (HTTP) - ✘ Failed to connect'
+    await reloj.advance(REVISION_DE_MCP_MS)
+    await asentar()
+
+    const despues = await montar($)
+    expect(await despues.find({ type: 'Text', text: /^✔ $/ })).toBeUndefined()
+    expect((await despues.find({ type: 'Text', text: /^✘ $/ }))?.props.color).toBe('error')
+    await despues.unmount()
+  })
+
+  test('si una consulta falla, el panel conserva lo último que leyó', async ($, on) => {
+    let respuesta = { exitCode: 0, stdout: 'notas: https://notas.example.com/mcp (HTTP) - ✔ Connected' }
+    conSesionMcp(on, () => respuesta)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    respuesta = { exitCode: 1, stdout: '' }
+    await reloj.advance(REVISION_DE_MCP_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'notas' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^✔ $/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('con CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC definida no consulta nada y no hay sección', async ($, on) => {
+    const { consultas, entorno } = conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    entorno.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1'
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    await reloj.advance(REVISION_DE_MCP_MS)
+    await asentar()
+
+    expect(consultas.cuenta).toBe(0)
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  // una compuerta para tener la consulta a medias: `abrir()` la deja terminar
+  const compuerta = () => {
+    let abrir = () => {}
+    const pasada = new Promise<void>(resolver => {
+      abrir = resolver
+    })
+
+    return { abrir, pasada }
+  }
+
+  test('mientras lee los estados por primera vez lo avisa, y al terminar muestra la lista', async ($, on) => {
+    const { abrir, pasada } = compuerta()
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }), () => pasada)
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const leyendo = await montar($)
+    expect(await leyendo.find({ type: 'Text', text: /^\nMCP$/ })).toBeDefined()
+    expect(await leyendo.find({ type: 'Text', text: 'Consultando estados…' })).toBeDefined()
+    expect(await leyendo.find({ type: 'Text', text: /^[✔✘] $/ })).toBeUndefined()
+    await leyendo.unmount()
+
+    abrir()
+    await asentar()
+
+    const lista = await montar($)
+    expect(await lista.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await lista.findAll({ type: 'Text', text: /^✔ $/ })).toHaveLength(2)
+    await lista.unmount()
+  })
+
+  test('si la primera lectura falla, el aviso se va y no queda una sección vacía', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 1, stdout: '' }))
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('refrescar una lista ya dibujada no vuelve a mostrar el aviso ni mueve el panel', async ($, on) => {
+    let pasada = Promise.resolve()
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }), () => pasada)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const segunda = compuerta()
+    pasada = segunda.pasada
+    await reloj.advance(REVISION_DE_MCP_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await ui.findAll({ type: 'Text', text: /^✔ $/ })).toHaveLength(2)
+    await ui.unmount()
+
+    segunda.abrir()
+    await asentar()
+  })
 })
 
 describe('ventana de contexto de los agentes', () => {
