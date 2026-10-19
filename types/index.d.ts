@@ -17,6 +17,18 @@ export type Proyecto = {
   worktree: string | null
 }
 
+/** Lo que `git` dice del árbol de trabajo: archivos sin comitear y archivos que cambiaron en commits desde que abrió la sesión. */
+export type CambiosDeGit = {
+  sinComitear: number
+  comiteados: number
+}
+
+/** El commit en el que estaba la rama al abrir la sesión: desde ahí se cuenta lo comiteado. */
+export type BaseDeCambios = {
+  rama: string
+  sha: string
+}
+
 export type AgenteEnCurso = {
   id: string
   descripcion: string
@@ -76,6 +88,9 @@ declare module 'claude-code' {
       shells: ShellEnSegundoPlano[]
       mcp: ServidorMcp[] | null
       mcpConsultando: boolean
+      cambios: CambiosDeGit | null
+      baseDeCambios: BaseDeCambios | null
+      cambiosPorRevisar: boolean
     }
   }
 }
