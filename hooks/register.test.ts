@@ -1703,8 +1703,12 @@ describe('servidores MCP', () => {
     }
   }
 
-  // una sesión cuyo `claude mcp list` contesta lo que diga `salida()`; devuelve cuántas veces se lo consultó
-  const conSesionMcp = (on: Alta, salida: () => { exitCode: number; stdout: string }) => {
+  // una sesión cuyo `claude mcp list` contesta lo que diga `salida()` cuando `espera()` se cumple; devuelve cuántas veces se lo consultó
+  const conSesionMcp = (
+    on: Alta,
+    salida: () => { exitCode: number; stdout: string },
+    espera: () => Promise<void> = async () => {},
+  ) => {
     const entorno: Record<string, string | undefined> = {}
     const consultas = { cuenta: 0 }
     on('env.get', (_$, e) => ({ value: entorno[e.name] }))
@@ -1713,9 +1717,10 @@ describe('servidores MCP', () => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto' }))
     on('fs.read', () => ({ value: JSON.stringify({ name: 'contexto-lateral', version: '0.2.0' }) }))
-    on('process.run', (_$, e) => {
+    on('process.run', async (_$, e) => {
       if (e.argv[0] === 'claude') {
         consultas.cuenta += 1
+        await espera()
 
         return { value: { ...salida(), stderr: '', ...sinTruncar } }
       }
@@ -1896,7 +1901,76 @@ describe('servidores MCP', () => {
     expect(consultas.cuenta).toBe(0)
     const ui = await montar($)
     expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
     await ui.unmount()
+  })
+
+  // una compuerta para tener la consulta a medias: `abrir()` la deja terminar
+  const compuerta = () => {
+    let abrir = () => {}
+    const pasada = new Promise<void>(resolver => {
+      abrir = resolver
+    })
+
+    return { abrir, pasada }
+  }
+
+  test('mientras lee los estados por primera vez lo avisa, y al terminar muestra la lista', async ($, on) => {
+    const { abrir, pasada } = compuerta()
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }), () => pasada)
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const leyendo = await montar($)
+    expect(await leyendo.find({ type: 'Text', text: /^\nMCP$/ })).toBeDefined()
+    expect(await leyendo.find({ type: 'Text', text: 'Consultando estados…' })).toBeDefined()
+    expect(await leyendo.find({ type: 'Text', text: /^[✔✘] $/ })).toBeUndefined()
+    await leyendo.unmount()
+
+    abrir()
+    await asentar()
+
+    const lista = await montar($)
+    expect(await lista.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await lista.findAll({ type: 'Text', text: /^✔ $/ })).toHaveLength(2)
+    await lista.unmount()
+  })
+
+  test('si la primera lectura falla, el aviso se va y no queda una sección vacía', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 1, stdout: '' }))
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^\nMCP$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('refrescar una lista ya dibujada no vuelve a mostrar el aviso ni mueve el panel', async ($, on) => {
+    let pasada = Promise.resolve()
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }), () => pasada)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    const segunda = compuerta()
+    pasada = segunda.pasada
+    await reloj.advance(REVISION_DE_MCP_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'Consultando estados…' })).toBeUndefined()
+    expect(await ui.findAll({ type: 'Text', text: /^✔ $/ })).toHaveLength(2)
+    await ui.unmount()
+
+    segunda.abrir()
+    await asentar()
   })
 })
 

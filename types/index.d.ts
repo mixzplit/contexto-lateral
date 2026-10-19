@@ -75,6 +75,7 @@ declare module 'claude-code' {
       limites: LimiteDeUso[]
       shells: ShellEnSegundoPlano[]
       mcp: ServidorMcp[] | null
+      mcpConsultando: boolean
     }
   }
 }

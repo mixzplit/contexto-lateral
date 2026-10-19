@@ -28,6 +28,7 @@ const ventanas = atom({ plugin: 'contexto-lateral', key: 'ventanas' } as const, 
 const limites = atom({ plugin: 'contexto-lateral', key: 'limites' } as const, [])
 const shells = atom({ plugin: 'contexto-lateral', key: 'shells' } as const, [])
 const mcp = atom({ plugin: 'contexto-lateral', key: 'mcp' } as const, null)
+const mcpConsultando = atom({ plugin: 'contexto-lateral', key: 'mcpConsultando' } as const, false)
 
 type Uso = {
   input_tokens: number
@@ -623,16 +624,22 @@ const refrescarMcp = async ($: EngineInterface) => {
       return
     }
 
-    const resultado = await $.process.run(['claude', 'mcp', 'list'], { timeoutMs: TIEMPO_MAXIMO_DE_MCP_MS })
-    if (resultado.exitCode !== 0) {
-      return
-    }
+    await update($, mcpConsultando, () => true)
 
-    const nuevos = servidoresMcp(resultado.stdout)
-    const actuales = await read($, mcp)
+    try {
+      const resultado = await $.process.run(['claude', 'mcp', 'list'], { timeoutMs: TIEMPO_MAXIMO_DE_MCP_MS })
+      if (resultado.exitCode !== 0) {
+        return
+      }
 
-    if (JSON.stringify(actuales) !== JSON.stringify(nuevos)) {
-      await update($, mcp, () => nuevos)
+      const nuevos = servidoresMcp(resultado.stdout)
+      const actuales = await read($, mcp)
+
+      if (JSON.stringify(actuales) !== JSON.stringify(nuevos)) {
+        await update($, mcp, () => nuevos)
+      }
+    } finally {
+      await update($, mcpConsultando, () => false)
     }
   } catch {
     // sin la consulta: el panel conserva lo último que leyó, o no muestra la sección
@@ -857,6 +864,9 @@ export const register: Register = (on, options) => {
     const ahora = await $.clock.now()
     const enSegundoPlano = (await read($, shells)).filter(s => shellSigueEnCurso(s, ahora))
     const servidores: ServidorMcp[] | null = await read($, mcp)
+    const consultandoMcp: boolean = await read($, mcpConsultando)
+    // el aviso es solo para la primera lectura: con una lista ya dibujada, refrescarla no debe mover el panel
+    const primeraLecturaDeMcp = servidores === null && consultandoMcp
 
     const columnas = e.props.bodyColumns ?? ANCHO_DEL_PANEL
     const ancho = Math.max(10, Math.min(ANCHO_MAXIMO_DE_LA_BARRA, columnas - 8))
@@ -1004,10 +1014,11 @@ export const register: Register = (on, options) => {
           </Box>
         )}
 
-        {servidores !== null && servidores.length > 0 && (
+        {(primeraLecturaDeMcp || (servidores !== null && servidores.length > 0)) && (
           <Box flexDirection="column">
             <Text bold>{'\n'}MCP</Text>
-            {servidores.map(s => (
+            {primeraLecturaDeMcp && <Text dimColor>Consultando estados…</Text>}
+            {(servidores ?? []).map(s => (
               <Box key={s.nombre}>
                 <Text color={s.conectado ? 'success' : 'error'} bold>
                   {s.conectado ? '✔ ' : '✘ '}
