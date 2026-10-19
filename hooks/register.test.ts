@@ -1816,6 +1816,45 @@ describe('servidores MCP', () => {
     await ui.unmount()
   })
 
+  test('la sección MCP va después del proyecto y antes de los agentes en curso y de los shells', async ($, on) => {
+    conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+    on('agent.spawn', () => ({ model: 'claude-haiku-4-5', agentId: 'a1' }))
+    on('tool.call', (_$, e) =>
+      e.tool === 'Bash' ? { result: { backgroundTaskId: 'b1' } } : { result: {} },
+    )
+    mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await $.agent.spawn({
+      tool_use_id: 'toolu_1',
+      prompt: 'mapear la API',
+      description: 'revisar el diff',
+      subagentType: 'general-purpose',
+      provider: { plugin: 'engine', tier: 'core' } as const,
+      parentModel: 'claude-sonnet-5-5',
+      background: true,
+      fork: false,
+    })
+    await $.tool.call({ tool: 'Bash', command: 'pnpm dev', run_in_background: true })
+    await asentar()
+
+    const ui = await montar($)
+    const nodos = aplanar(await ui.drawn())
+    const textoDe = (n: Nodo) => (n.children ?? []).filter(h => typeof h === 'string').join('')
+    const posicionDe = (texto: RegExp) => nodos.findIndex(n => n.type === 'Text' && texto.test(textoDe(n)))
+
+    const proyecto = posicionDe(/^\nProyecto$/)
+    const seccion = posicionDe(/^\nMCP$/)
+    const agentes = posicionDe(/^\nAgentes en curso \(1\)$/)
+    const shells = posicionDe(/^\nShells en segundo plano \(1\)$/)
+
+    expect(proyecto).toBeGreaterThan(-1)
+    expect(seccion).toBeGreaterThan(proyecto)
+    expect(agentes).toBeGreaterThan(seccion)
+    expect(shells).toBeGreaterThan(agentes)
+    await ui.unmount()
+  })
+
   test('sin servidores de la persona, el panel no dibuja la sección', async ($, on) => {
     conSesionMcp(on, () => ({
       exitCode: 0,

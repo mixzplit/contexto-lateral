@@ -957,6 +957,21 @@ export const register: Register = (on, options) => {
           </Box>
         )}
 
+        {(primeraLecturaDeMcp || (servidores !== null && servidores.length > 0)) && (
+          <Box flexDirection="column">
+            <Text bold>{'\n'}MCP</Text>
+            {primeraLecturaDeMcp && <Text dimColor>Consultando estados…</Text>}
+            {(servidores ?? []).map(s => (
+              <Box key={s.nombre}>
+                <Text color={s.conectado ? 'success' : 'error'} bold>
+                  {s.conectado ? '✔ ' : '✘ '}
+                </Text>
+                <Text wrap="truncate-end">{recortar(s.nombre, Math.max(1, columnas - 2))}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+
         {enCurso.length > 0 && (
           <Box flexDirection="column">
             <Text bold>{`\nAgentes en curso (${enCurso.length})`}</Text>
@@ -1009,21 +1024,6 @@ export const register: Register = (on, options) => {
                 <Text dimColor wrap="truncate-end">
                   {recortar(s.comando, Math.max(1, columnas - 2))}
                 </Text>
-              </Box>
-            ))}
-          </Box>
-        )}
-
-        {(primeraLecturaDeMcp || (servidores !== null && servidores.length > 0)) && (
-          <Box flexDirection="column">
-            <Text bold>{'\n'}MCP</Text>
-            {primeraLecturaDeMcp && <Text dimColor>Consultando estados…</Text>}
-            {(servidores ?? []).map(s => (
-              <Box key={s.nombre}>
-                <Text color={s.conectado ? 'success' : 'error'} bold>
-                  {s.conectado ? '✔ ' : '✘ '}
-                </Text>
-                <Text wrap="truncate-end">{recortar(s.nombre, Math.max(1, columnas - 2))}</Text>
               </Box>
             ))}
           </Box>
