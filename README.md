@@ -51,6 +51,7 @@
 - Los modelos usados, con sus turnos y sus tokens de entrada, salida y caché.
 - Los agentes y los shells que corren en segundo plano, mientras corren. De cada agente se ve el contexto que usa; la barra con el porcentaje aparece cuando el mod conoce la ventana de su modelo. Esa ventana se aprende cuando el modelo corre como principal y se recuerda entre sesiones; mientras no se conoce, el panel muestra solo los tokens.
 - El proyecto, la rama y el worktree.
+- Los servidores MCP que instalaste vos, con un ✔ verde si están conectados y una ✘ roja si no (también cuando piden iniciar sesión). No muestra los que vienen con Claude Code: los de los plugins y los conectores de claude.ai. Se consultan con `claude mcp list` al abrir la sesión y cada 10 minutos; la consulta tarda unos segundos, corre en tu máquina y no gasta tokens del modelo. Con `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` definida no se consulta y la sección no aparece.
 - Las cuotas de uso de 5 horas y semanal.
 
 ## Requisitos y sistemas

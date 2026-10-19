@@ -44,6 +44,12 @@ export type ShellEnSegundoPlano = {
   visto: number
 }
 
+/** Un servidor MCP instalado por la persona y si `claude mcp list` lo dio por conectado. */
+export type ServidorMcp = {
+  nombre: string
+  conectado: boolean
+}
+
 /** Una entrada de `background_tasks` del hook Stop, con la forma de `BackgroundTaskSummary` (el contrato no puede importar). */
 export type TareaEnSegundoPlano = {
   id: string
@@ -68,6 +74,7 @@ declare module 'claude-code' {
       ventanas: Record<string, number>
       limites: LimiteDeUso[]
       shells: ShellEnSegundoPlano[]
+      mcp: ServidorMcp[] | null
     }
   }
 }
