@@ -220,6 +220,19 @@ describe('helpers', () => {
 })
 
 describe('panel', () => {
+  // el proyecto se lee en segundo plano al abrir la sesión: se le dan vueltas para que termine antes de mirar
+  const abrirSesion = async ($: Engine, on: Parameters<typeof mock.clock>[0]) => {
+    on('env.get', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('command.register', () => ({ value: { command: 'contexto' } }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+
+    await $.session.start({ cwd: 'C:\\trabajo\\mi-proyecto', surface: 'terminal', isInteractive: true })
+    for (let i = 0; i < 100; i += 1) {
+      await Promise.resolve()
+    }
+  }
+
   test('/contexto abre el panel pidiendo el 20% del ancho de la terminal', async ($, on) => {
     const pedidos: Array<{ id: string; columns?: number }> = []
     on('ui.open', (_$, e) => {
@@ -367,22 +380,13 @@ describe('panel', () => {
   })
 
   test('sin git el panel muestra el proyecto y avisa que no hay rama', async ($, on) => {
-    on('turn.complete', (_$, e) => ({ text: e.answer, usage: e.usage }))
     on('process.run', () => ({
       value: { exitCode: 128, stdout: '', stderr: 'not a git repository', ...sinTruncar },
     }))
     on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto' }))
-    on('agent.list', () => ({ value: [] }))
     mock.clock(on)
 
-    await $.turn.complete({
-      answer: 'listo',
-      durationMs: 10,
-      isAborted: false,
-      turnId: 'turno-2',
-      reason: 'answer',
-      usage: { ...USO, model: 'claude-sonnet-5-5' },
-    })
+    await abrirSesion($, on)
 
     const ui = await $.ui.mount({
       plugin: 'contexto-lateral',
@@ -398,9 +402,7 @@ describe('panel', () => {
   })
 
   test('en un worktree muestra el proyecto, la rama y el worktree', async ($, on) => {
-    on('turn.complete', (_$, e) => ({ text: e.answer, usage: e.usage }))
     on('session.root', () => ({ value: 'C:\\trabajo\\mi-proyecto-s22' }))
-    on('agent.list', () => ({ value: [] }))
     mock.clock(on)
     on('process.run', (_$, e) => {
       const args = e.argv.join(' ')
@@ -411,14 +413,7 @@ describe('panel', () => {
       return { value: { exitCode: 0, stdout: `${salida}\n`, stderr: '', ...sinTruncar } }
     })
 
-    await $.turn.complete({
-      answer: 'listo',
-      durationMs: 10,
-      isAborted: false,
-      turnId: 'turno-3',
-      reason: 'answer',
-      usage: { ...USO, model: 'claude-sonnet-5-5' },
-    })
+    await abrirSesion($, on)
 
     const ui = await $.ui.mount({
       plugin: 'contexto-lateral',
@@ -1473,7 +1468,7 @@ describe('aviso de versión nueva', () => {
 
   // la consulta corre en segundo plano: se le dan vueltas para que termine antes de mirar
   const asentar = async () => {
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < 300; i += 1) {
       await Promise.resolve()
     }
   }
@@ -2055,6 +2050,12 @@ describe('cambios de git', () => {
       if (args.startsWith('rev-parse HEAD')) {
         return ok([estado.sha, estado.rama])
       }
+      if (args.startsWith('rev-parse --path-format=absolute')) {
+        return ok(['C:/trabajo/mi-proyecto', 'C:/trabajo/mi-proyecto/.git', 'C:/trabajo/mi-proyecto/.git'])
+      }
+      if (args === 'branch --show-current') {
+        return ok([estado.rama])
+      }
       if (args.includes('status')) {
         return estado.falla ? falla : ok(archivos(estado.sucios).map(a => ` M ${a}`))
       }
@@ -2065,7 +2066,11 @@ describe('cambios de git', () => {
       return falla
     })
 
-    return { llamadas, consultasDeEstado: () => llamadas.filter(l => l.includes('status')).length }
+    return {
+      llamadas,
+      consultasDeEstado: () => llamadas.filter(l => l.includes('status')).length,
+      lecturasDeProyecto: () => llamadas.filter(l => l.includes('--show-toplevel')).length,
+    }
   }
 
   const iniciar = ($: Engine) =>
@@ -2238,6 +2243,47 @@ describe('cambios de git', () => {
     await reloj.advance(REVISION_DE_CAMBIOS_MS * 4)
     await asentar()
     expect(consultasDeEstado()).toBe(2)
+  })
+
+  test('cerrar un turno no le pide la rama a git: se lee en el intervalo siguiente y solo si hubo actividad', async ($, on) => {
+    const { lecturasDeProyecto } = conRepositorio(on, BASE)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+    expect(lecturasDeProyecto()).toBe(1)
+
+    await completarTurno($, 'turno-1')
+    expect(lecturasDeProyecto()).toBe(1)
+
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+    expect(lecturasDeProyecto()).toBe(2)
+
+    // quieta: sin actividad no vuelve a leer
+    await reloj.advance(REVISION_DE_CAMBIOS_MS * 4)
+    await asentar()
+    expect(lecturasDeProyecto()).toBe(2)
+  })
+
+  test('si la rama cambia durante un turno, el panel la muestra en el intervalo siguiente', async ($, on) => {
+    const estado = { ...BASE }
+    conRepositorio(on, estado)
+    const reloj = mock.clock(on, { now: AHORA })
+
+    await iniciar($)
+    await asentar()
+
+    estado.rama = 'feat/otra'
+    estado.sha = 'bbb222'
+    await completarTurno($, 'turno-1')
+    await reloj.advance(REVISION_DE_CAMBIOS_MS)
+    await asentar()
+
+    const ui = await montar($)
+    expect(await ui.find({ type: 'Text', text: 'rama: feat/otra' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'rama: main' })).toBeUndefined()
+    await ui.unmount()
   })
 
   test('git status no toma el lock del índice: no le estorba a quien comitea a la vez', async ($, on) => {
