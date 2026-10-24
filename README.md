@@ -51,8 +51,17 @@
 - Los modelos usados, con sus turnos y sus tokens de entrada, salida y caché.
 - Los agentes y los shells que corren en segundo plano, mientras corren. De cada agente se ve el contexto que usa; la barra con el porcentaje aparece cuando el mod conoce la ventana de su modelo. Esa ventana se aprende cuando el modelo corre como principal y se recuerda entre sesiones; mientras no se conoce, el panel muestra solo los tokens.
 - El proyecto, la rama y el worktree (este último solo si estás en uno). Debajo, una línea «archivos: 5 sin comitear  0 comiteados»: en rojo los archivos «sin comitear» y en verde los «comiteados», que son los que cambiaron en commits desde que abriste la sesión; si son cero, van en gris. Si el panel es demasiado angosto para la línea entera, «archivos:» pasa a su propia línea y los números van debajo. Al cambiar de rama, lo comiteado vuelve a contar desde cero. Se leen con `git` como mucho una vez cada 15 segundos y solo si hubo actividad, sin tomar el lock del índice. Fuera de un repositorio de git no aparecen.
-- Los servidores MCP que instalaste vos, con un ✔ verde si están conectados y una ✘ roja si no (también cuando piden iniciar sesión). No muestra los que vienen con Claude Code: los de los plugins y los conectores de claude.ai. Se consultan con `claude mcp list` al abrir la sesión y cada 10 minutos; la consulta tarda unos segundos (mientras lee por primera vez, la sección dice «Consultando estados…»), corre en tu máquina y no gasta tokens del modelo. Con `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` definida no se consulta y la sección no aparece.
+- Los servidores MCP que instalaste vos, con un ✔ verde si están conectados y una ✘ roja si no (también cuando piden iniciar sesión). No muestra los conectores de claude.ai ni, por defecto, los servidores que traen los plugins (los que empiezan con `plugin:`). Para ver también los de los plugins, activa la opción **Mostrar servidores MCP de plugins** (ver [Opciones](#opciones)). Se consultan con `claude mcp list` al abrir la sesión y cada 10 minutos; la consulta tarda unos segundos (mientras lee por primera vez, la sección dice «Consultando estados…»), corre en tu máquina y no gasta tokens del modelo. Con `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` definida no se consulta y la sección no aparece.
 - Las cuotas de uso de 5 horas y semanal.
+
+## Opciones
+
+El mod tiene dos opciones. Se cambian desde `/plugin`: entra en **Installed**, elige **Side Context** y **Configure options**. **Después de cambiar una, ejecuta `/reload-plugins`** (o abre una sesión nueva): el mod lee sus opciones al cargarse y hasta entonces sigue con las anteriores.
+
+| Opción | Por defecto | Qué hace |
+|--------|-------------|----------|
+| **Avisar de versiones nuevas** | Activada | Una vez al día consulta en GitHub si hay una versión nueva y la muestra en el panel. Ver [Qué consulta el mod en internet](#qué-consulta-el-mod-en-internet). |
+| **Mostrar servidores MCP de plugins** | Apagada | Suma a la sección de servidores MCP los que traen los plugins instalados (los que empiezan con `plugin:`). Está apagada porque con varios plugins pueden ser muchas filas rojas de servidores que piden iniciar sesión. Los conectores de claude.ai nunca se muestran. |
 
 ## Requisitos y sistemas
 
@@ -76,7 +85,7 @@ El mod se instala por usuario, no dentro de tus proyectos. En esta tabla, `~` es
 | Este repositorio, clonado como marketplace | `~/.claude/plugins/marketplaces/side-context/` |
 | El registro de lo instalado | `~/.claude/plugins/installed_plugins.json` y `~/.claude/plugins/known_marketplaces.json` |
 | Lo que Claude Code tiene declarado y habilitado | `extraKnownMarketplaces` y `enabledPlugins` en `~/.claude/settings.json` |
-| La opción de avisos de versión, si la cambias | `pluginConfigs` en `~/.claude/settings.json` |
+| Las opciones del mod (avisos de versión y servidores MCP de plugins), si las cambias | `pluginConfigs` en `~/.claude/settings.json` |
 | Lo que el mod recuerda entre sesiones (cuándo consultó por última vez y la ventana de contexto que aprendió de cada modelo) | Un archivo JSON propio del mod, dentro de la carpeta de configuración de Claude Code |
 
 Si defines la variable `CLAUDE_CODE_PLUGIN_CACHE_DIR`, Claude Code usa esa carpeta en lugar de `~/.claude/plugins`.
@@ -105,7 +114,7 @@ https://raw.githubusercontent.com/mixzplit/contexto-lateral/main/.claude-plugin/
 - Solo acepta como respuesta un número con forma `MAJOR.MINOR.PATCH`; cualquier otra cosa se descarta.
 - Si la consulta falla, el mod sigue funcionando sin avisar nada.
 - Si tienes definida la variable de entorno `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` (con cualquier valor salvo vacío, `0` o `false`), el mod no hace la consulta. Claude Code no frena por sí solo el pedido de un mod, por eso el mod respeta esa variable por su cuenta.
-- Para apagarla: abre `/config` y desactiva **Avisar de versiones nuevas**.
+- Para apagarla, desactiva **Avisar de versiones nuevas** (ver [Opciones](#opciones)).
 
 ## Desinstalar
 

@@ -11,6 +11,12 @@
       "title": "Avisar de versiones nuevas",
       "description": "Una vez al día consulta en GitHub si hay una versión nueva del mod y la muestra en el panel. No instala nada.",
       "default": true
+    },
+    "mostrarMcpDePlugins": {
+      "type": "boolean",
+      "title": "Mostrar servidores MCP de plugins",
+      "description": "Suma al panel los servidores MCP que traen los plugins instalados (los que empiezan con plugin:), con su estado. Los conectores de claude.ai siguen ocultos.",
+      "default": false
     }
   },
   "description": "Side pane with the live context window, the models used and the tokens spent in the session",

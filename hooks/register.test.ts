@@ -31,6 +31,7 @@ import {
   numeroDeVersion,
   porcentajeDeAgente,
   recortar,
+  seMuestraElMcp,
   shellSigueEnCurso,
   servidoresMcp,
   shellsDeLasTareas,
@@ -1747,6 +1748,24 @@ describe('servidores MCP', () => {
     expect(esMcpDelUsuario('mi-plugin-propio')).toBe(true)
   })
 
+  test('con la opción de plugins, la lista suma sus servidores y sigue sin los conectores de claude.ai', () => {
+    expect(servidoresMcp(SALIDA, true)).toEqual([
+      { nombre: 'plugin:equipo:chat', conectado: false },
+      { nombre: 'plugin:equipo:agenda', conectado: false },
+      { nombre: 'notas', conectado: true },
+      { nombre: 'memoria', conectado: true },
+      { nombre: 'tablero', conectado: false },
+      { nombre: 'wiki', conectado: false },
+    ])
+  })
+
+  test('un servidor de plugin se muestra solo si la persona lo pidió; un conector de claude.ai, nunca', () => {
+    expect(seMuestraElMcp('plugin:equipo:chat', true)).toBe(true)
+    expect(seMuestraElMcp('plugin:equipo:chat', false)).toBe(false)
+    expect(seMuestraElMcp('claude.ai Docs', true)).toBe(false)
+    expect(seMuestraElMcp('notas', false)).toBe(true)
+  })
+
   test('una marca deformada por la consola no cambia el estado, y las líneas con CRLF se leen igual', () => {
     const salida =
       'notas: https://notas.example.com/mcp (HTTP) - âœ" Connected\r\nwiki: https://wiki.example.com/mcp - âœ˜ Failed to connect\r\n'
@@ -1780,6 +1799,45 @@ describe('servidores MCP', () => {
     expect(await ui.find({ type: 'Text', text: /chat|Docs|agenda/ })).toBeUndefined()
     await ui.unmount()
   })
+
+  test(
+    'con la opción de plugins, el panel muestra también sus servidores, y los de claude.ai siguen ocultos',
+    { options: { mostrarMcpDePlugins: true } },
+    async ($, on) => {
+      conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+      mock.clock(on, { now: AHORA })
+
+      await iniciar($)
+      await asentar()
+
+      const ui = await montar($)
+      expect(await ui.find({ type: 'Text', text: /^plugin:equipo:chat$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^plugin:equipo:agenda$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^notas$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /Docs/ })).toBeUndefined()
+      expect(await ui.findAll({ type: 'Text', text: /^✘ $/ })).toHaveLength(4)
+      await ui.unmount()
+    },
+  )
+
+  test(
+    'la opción de plugins vale también en las consultas que se repiten cada 10 minutos',
+    { options: { mostrarMcpDePlugins: true } },
+    async ($, on) => {
+      const { consultas } = conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
+      const reloj = mock.clock(on, { now: AHORA })
+
+      await iniciar($)
+      await asentar()
+      await reloj.advance(REVISION_DE_MCP_MS)
+      await asentar()
+      expect(consultas.cuenta).toBe(2)
+
+      const ui = await montar($)
+      expect(await ui.find({ type: 'Text', text: /^plugin:equipo:chat$/ })).toBeDefined()
+      await ui.unmount()
+    },
+  )
 
   test('las cuotas siguen siendo lo último del panel con la sección MCP', async ($, on) => {
     conSesionMcp(on, () => ({ exitCode: 0, stdout: SALIDA }))
