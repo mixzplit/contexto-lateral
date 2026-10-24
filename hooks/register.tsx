@@ -598,22 +598,31 @@ export const REVISION_DE_MCP_MS = 10 * 60 * 1000
 
 const TIEMPO_MAXIMO_DE_MCP_MS = 60 * 1000
 
-/** Lo que viene con Claude Code (los servidores de los plugins y los conectores de claude.ai) no se muestra. */
-const PREFIJOS_DE_MCP_AJENOS = ['plugin:', 'claude.ai ']
+const PREFIJO_DE_MCP_DE_PLUGIN = 'plugin:'
+
+/** Lo que viene con Claude Code (los servidores de los plugins y los conectores de claude.ai) no cuenta como de la persona. */
+const PREFIJOS_DE_MCP_AJENOS = [PREFIJO_DE_MCP_DE_PLUGIN, 'claude.ai ']
 
 export const esMcpDelUsuario = (nombre: string): boolean =>
   !PREFIJOS_DE_MCP_AJENOS.some(prefijo => nombre.startsWith(prefijo))
 
+/** Los conectores de claude.ai nunca se muestran; los servidores de los plugins, solo si la persona activó la opción. */
+export const seMuestraElMcp = (nombre: string, conDePlugins: boolean): boolean =>
+  esMcpDelUsuario(nombre) || (conDePlugins && nombre.startsWith(PREFIJO_DE_MCP_DE_PLUGIN))
+
 // «<nombre>: <destino> - <marca> <estado>». La marca (✔, ✘, !) no se compara: según la consola puede llegar deformada.
 const LINEA_DE_MCP = /^(.+?): (.*) - \S+ (.+)$/
 
-/** Los servidores de la persona que lista `claude mcp list`; lo que no tiene la forma de una línea (avisos, encabezado) se ignora. */
-export const servidoresMcp = (salida: string): ServidorMcp[] =>
+/**
+ * Los servidores que lista `claude mcp list` y que se muestran: los de la persona y, con `conDePlugins`, los de los
+ * plugins. Lo que no tiene la forma de una línea (avisos, encabezado) se ignora.
+ */
+export const servidoresMcp = (salida: string, conDePlugins = false): ServidorMcp[] =>
   salida.split(/\r?\n/).flatMap(linea => {
     const partes = LINEA_DE_MCP.exec(linea.trim())
     const nombre = partes?.[1]
 
-    return partes && nombre && esMcpDelUsuario(nombre)
+    return partes && nombre && seMuestraElMcp(nombre, conDePlugins)
       ? [{ nombre, conectado: /^Connected\b/.test(partes[3] ?? '') }]
       : []
   })
@@ -623,7 +632,7 @@ export const servidoresMcp = (salida: string): ServidorMcp[] =>
  * servidores caídos. Cualquier falla deja lo último que se leyó. Con CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC no se
  * consulta, porque la comprobación conecta con cada servidor.
  */
-const refrescarMcp = async ($: EngineInterface) => {
+const refrescarMcp = async ($: EngineInterface, conDePlugins: boolean) => {
   try {
     if (await sinTraficoInnecesario($)) {
       return
@@ -637,7 +646,7 @@ const refrescarMcp = async ($: EngineInterface) => {
         return
       }
 
-      const nuevos = servidoresMcp(resultado.stdout)
+      const nuevos = servidoresMcp(resultado.stdout, conDePlugins)
       const actuales = await read($, mcp)
 
       if (JSON.stringify(actuales) !== JSON.stringify(nuevos)) {
@@ -654,14 +663,14 @@ const refrescarMcp = async ($: EngineInterface) => {
 let leyendoMcp = false
 
 /** Una consulta que tarda no se pisa con la siguiente: la periódica espera a que termine la anterior. */
-const revisarMcp = async ($: EngineInterface) => {
+const revisarMcp = async ($: EngineInterface, conDePlugins: boolean) => {
   if (leyendoMcp) {
     return
   }
 
   leyendoMcp = true
   try {
-    await refrescarMcp($)
+    await refrescarMcp($, conDePlugins)
   } finally {
     leyendoMcp = false
   }
@@ -770,9 +779,10 @@ export const register: Register = (on, options) => {
     })
 
     // en segundo plano: la consulta tarda unos segundos y no debe demorar el arranque
-    void revisarMcp($)
+    const conMcpDePlugins = options.mostrarMcpDePlugins === true
+    void revisarMcp($, conMcpDePlugins)
     $.clock.every(REVISION_DE_MCP_MS, () => {
-      void revisarMcp($)
+      void revisarMcp($, conMcpDePlugins)
     })
 
     // en segundo plano: la primera lectura lee el proyecto y fija el commit desde el que se cuentan los de la sesión
