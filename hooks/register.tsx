@@ -726,12 +726,15 @@ const refrescarCambios = async ($: EngineInterface) => {
   }
 }
 
-/** Solo consulta si hubo actividad desde la última vez: una sesión quieta no gasta ni un `git status`. */
+/**
+ * Solo consulta si hubo actividad desde la última vez: una sesión quieta no llama a git. La misma marca cubre la rama
+ * (un comando del turno puede haberla cambiado) y los archivos, y ninguna consulta demora el cierre del turno.
+ */
 const revisarCambios = async ($: EngineInterface) => {
   try {
     if (await read($, cambiosPorRevisar)) {
       await update($, cambiosPorRevisar, () => false)
-      await refrescarCambios($)
+      await Promise.all([refrescarProyecto($), refrescarCambios($)])
     }
   } catch {
     // observar nunca debe romper la sesión
@@ -772,7 +775,7 @@ export const register: Register = (on, options) => {
       void revisarMcp($)
     })
 
-    // en segundo plano: la primera lectura fija el commit desde el que se cuentan los de la sesión
+    // en segundo plano: la primera lectura lee el proyecto y fija el commit desde el que se cuentan los de la sesión
     await update($, cambiosPorRevisar, () => true)
     void revisarCambios($)
     $.clock.every(REVISION_DE_CAMBIOS_MS, () => {
@@ -803,8 +806,6 @@ export const register: Register = (on, options) => {
     await update($, modVersion, () => propia)
     // en segundo plano: la consulta a GitHub no debe demorar el arranque de la sesión
     void revisarVersionNueva($, propia, options.avisarVersionNueva !== false)
-
-    await refrescarProyecto($)
 
     return next(e)
   })
@@ -938,7 +939,6 @@ export const register: Register = (on, options) => {
     await marcarCambiosPorRevisar($)
 
     if (e.agentId === undefined) {
-      await refrescarProyecto($)
       await reconciliarAgentes($)
     }
 
